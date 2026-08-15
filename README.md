@@ -165,6 +165,16 @@ npm run register
 Commands register per-guild, so they appear instantly. Re-run this any time you
 change command definitions.
 
+While you're here, give the bot a face (optional but recommended):
+
+```bash
+npm run brand
+```
+
+This sets the app's avatar (from `assets/icon.png` — swap in your own art if
+you prefer) and its About Me description via the Discord API. Without it, your
+bot posts with Discord's default blank avatar.
+
 ### 7. Verify
 
 In Discord, run `/standings` — if it returns your league's table, interactions
@@ -289,6 +299,8 @@ Built for **dynasty** leagues with **QB/RB/WR/TE/FLEX** starting slots:
 ```
 ├── wrangler.toml            # Worker config: crons, KV + DO bindings, vars
 ├── deploy-commands.js       # Local script: registers the slash commands
+├── scripts/brand.js         # Local script: sets the app's avatar + About Me
+├── assets/icon.png          # Default bot avatar (swap in your own art)
 ├── src/
 │   ├── index.js             # fetch (interactions) + scheduled (crons) + DO export
 │   ├── lib/                 # signature verify, Discord REST (incl. DMs),
