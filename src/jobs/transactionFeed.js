@@ -10,6 +10,16 @@
 // Unlike tradeAlerts' one-message-per-item, transactions are batched into
 // chunked embeds — waiver day can produce a burst — with per-chunk retry
 // granularity on post failure.
+//
+// KV writes: the snapshot is only written when it actually changes, which
+// keeps a quiet league near zero writes against the free plan's 1,000/day.
+// The write is also what refreshes the 24h TTL, so a mode that is enabled but
+// sees zero transaction changes for 24h lets its key expire and re-seeds on
+// the next tick. Seeding never posts, so a transaction that lands in the
+// window between that expiry and the next tick (≤15 min) is absorbed into the
+// new snapshot instead of being announced. That is rare and bounded — it takes
+// a full day of silence followed by activity inside one cron gap — and the TTL
+// is worth keeping because it garbage-collects the keys of dormant modes.
 
 import { fetchLeagueTransactions } from '../services/fleaflicker.js';
 import { createEmbed, COLORS, formatTimestamp, truncate } from '../utils/formatters.js';
@@ -128,7 +138,12 @@ export async function runTransactionFeed(env, {
   const next = [...new Set(relevant.map(txFeedKey))].filter(
     (k) => postedKeys.has(k) || seen.has(k)
   );
-  await env.BOT_KV.put(kvKey, JSON.stringify(next), { expirationTtl: KV_TTL_SECONDS });
+
+  // Skip the put when nothing changed — see the KV-write note in the header.
+  const serialized = JSON.stringify(next);
+  if (serialized !== JSON.stringify(seenRaw)) {
+    await env.BOT_KV.put(kvKey, serialized, { expirationTtl: KV_TTL_SECONDS });
+  }
 }
 
 /** Greedily pack entries into chunks whose joined lines stay <= maxChars. */

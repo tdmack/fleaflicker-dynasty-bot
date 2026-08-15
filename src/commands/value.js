@@ -1,12 +1,17 @@
 import { getDynastyValues, valuesFooter } from '../services/fantasycalc.js';
-import { createEmbed, positionColor, COLORS } from '../utils/formatters.js';
+import { createEmbed, positionColor, truncate, COLORS } from '../utils/formatters.js';
 import { getOption } from '../lib/options.js';
+
+// Discord caps embed titles at 256 chars. The `player` option is capped at 100
+// by the definition below, but truncate defensively anyway — an over-long title
+// makes Discord reject the edit and strands the user on "thinking…".
+const TITLE_QUERY_MAX = 80;
 
 export const definition = {
   name: 'value',
   description: 'Dynasty trade values (FantasyCalc)',
   options: [
-    { type: 3, name: 'player', description: 'Player name (partial OK) — omit for the top-20 board', required: false },
+    { type: 3, name: 'player', description: 'Player name (partial OK) — omit for the top-20 board', required: false, max_length: 100 },
   ],
 };
 
@@ -43,12 +48,13 @@ export async function execute(interaction, env) {
   }
 
   // Player lookup — case-insensitive partial match
+  const safeQuery = truncate(query, TITLE_QUERY_MAX);
   const lower = query.trim().toLowerCase();
   const matches = values.filter((p) => p.name.toLowerCase().includes(lower));
 
   if (matches.length === 0) {
     return { embeds: [createEmbed({
-      title: `💎 Value Lookup — ${query}`,
+      title: `💎 Value Lookup — ${safeQuery}`,
       description: `No player found matching **${query}**. Check spelling or try a partial name.`,
       color: COLORS.grey,
     })] };
@@ -59,7 +65,7 @@ export async function execute(interaction, env) {
       `${i + 1}. **${p.name}** (${p.position}, ${p.team}) — ${p.value}`
     ).join('\n');
     return { embeds: [createEmbed({
-      title: `💎 Multiple Players Found — "${query}"`,
+      title: `💎 Multiple Players Found — "${safeQuery}"`,
       description: `Found ${matches.length} players. Showing top 3:\n\n${list}\n\nTry a more specific name.`,
       color: COLORS.grey,
     })] };

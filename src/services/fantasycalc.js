@@ -3,6 +3,9 @@
 // 12-team, 0.5 PPR league.
 
 const TTL_SECONDS = 6 * 3600; // values update ~daily
+// Identify ourselves to FantasyCalc — an unattributed bot is the first thing
+// an API owner blocks when traffic looks odd.
+const USER_AGENT = 'fleaflicker-dynasty-bot (https://github.com/tdmack/fleaflicker-dynasty-bot)';
 
 import { isBlockedPosition } from '../utils/positions.js';
 
@@ -52,7 +55,10 @@ export async function getDynastyValues(env) {
   const cached = await env.BOT_KV.get(cacheKey, 'json');
   if (Array.isArray(cached) && cached.length > 0) return cached;
 
-  const res = await fetch(buildValuesUrl(env), { signal: AbortSignal.timeout(15000) });
+  const res = await fetch(buildValuesUrl(env), {
+    headers: { 'User-Agent': USER_AGENT },
+    signal: AbortSignal.timeout(15000),
+  });
   if (!res.ok) {
     throw new Error(`FantasyCalc returned HTTP ${res.status}`);
   }

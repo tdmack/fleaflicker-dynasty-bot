@@ -7,7 +7,7 @@ export const definition = {
   name: 'score',
   description: 'Current week matchup scores',
   options: [
-    { type: 3, name: 'team', description: 'Filter to one team (partial name OK)', required: false },
+    { type: 3, name: 'team', description: 'Filter to one team (partial name OK)', required: false, max_length: 100 },
   ],
 };
 

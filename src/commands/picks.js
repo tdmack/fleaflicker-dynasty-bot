@@ -7,7 +7,7 @@ export const definition = {
   name: 'picks',
   description: 'Future draft pick assets for a team',
   options: [
-    { type: 3, name: 'team', description: 'Team name (partial OK)', required: true },
+    { type: 3, name: 'team', description: 'Team name (partial OK)', required: true, max_length: 100 },
   ],
 };
 

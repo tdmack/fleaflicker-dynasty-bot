@@ -9,7 +9,7 @@ export const definition = {
   name: 'transactions',
   description: 'Recent waiver claims, adds, and drops',
   options: [
-    { type: 3, name: 'team', description: 'Filter to a specific team (partial name OK)', required: false },
+    { type: 3, name: 'team', description: 'Filter to a specific team (partial name OK)', required: false, max_length: 100 },
   ],
 };
 

@@ -20,7 +20,7 @@ export async function execute(interaction, env) {
   const position = getOption(interaction, 'position');
 
   if (position && !VALID_POSITIONS.includes(position.toUpperCase())) {
-    return { embeds: [errorEmbed('This league uses **QB, RB, WR, TE, FLEX** positions only.')] };
+    return { embeds: [errorEmbed('Supported positions are **QB, RB, WR, TE, FLEX**.')] };
   }
 
   const params = {
@@ -32,7 +32,8 @@ export async function execute(interaction, env) {
   }
 
   const data = await fetchPlayerListing(env, params);
-  // Defensive: the unfiltered listing could include K/DEF, which this league never shows
+  // Defensive: the unfiltered listing could include K/DEF, which this bot never shows
+  // (see src/utils/positions.js)
   const players = (data.players || [])
     .filter((entry) => !isBlockedPosition(entry.proPlayer?.position))
     .slice(0, 10);

@@ -9,11 +9,18 @@ export const definition = {
   description: 'Link your Discord account to your Fleaflicker team for draft-turn DMs',
   options: [
     {
-      type: 3, name: 'team', required: true,
+      type: 3, name: 'team', required: true, max_length: 100,
       description: 'Your Fleaflicker team name (partial match OK)',
     },
   ],
 };
+
+const MANAGE_GUILD = 32n;
+
+/** True when the invoking member carries the Manage Server permission bit. */
+function hasManageServer(interaction) {
+  return (BigInt(interaction.member?.permissions || '0') & MANAGE_GUILD) === MANAGE_GUILD;
+}
 
 export async function execute(interaction, env) {
   const query = getOption(interaction, 'team');
@@ -53,6 +60,21 @@ export async function execute(interaction, env) {
   }
   const takenBy = registrations[team.id]?.userId;
   const reassigned = takenBy && takenBy !== userId;
+
+  // Anti-hijack: taking over someone else's team silently redirects their
+  // draft-turn DMs, so only a commissioner (Manage Server) may reassign.
+  // Returning here leaves `registrations` unsaved — the in-memory delete above
+  // is discarded with it, so the caller's own link is untouched.
+  if (reassigned && !hasManageServer(interaction)) {
+    return { embeds: [createEmbed({
+      title: '🔒 That team is already registered',
+      description: `**${team.name}** is linked to <@${takenBy}>.\n\n`
+        + 'If that is wrong, a commissioner (anyone with **Manage Server**) can '
+        + 'run `/register` for this team to reassign it.',
+      color: COLORS.orange,
+    })] };
+  }
+
   registrations[team.id] = { userId, teamName: team.name, registeredAt: Date.now() };
   await saveRegistrations(env, registrations);
 

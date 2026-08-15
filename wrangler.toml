@@ -20,12 +20,13 @@ crons = ["*/15 * * * *", "0 13 * * *", "0 15 * * thu,sun"]
 [observability]
 enabled = true
 
-# The Deploy to Cloudflare button provisions this namespace and fills in the
-# id automatically. Manual setup: `npx wrangler kv namespace create BOT_KV`
-# and paste the returned id here.
+# KV namespace for bot state. No `id` here on purpose: the Deploy to Cloudflare
+# button (and a first `wrangler deploy`) auto-provisions the namespace and
+# binds it for you. Setting up by hand instead? Run
+# `wrangler kv namespace create BOT_KV` and add the returned id below as
+# `id = "<your id>"`.
 [[kv_namespaces]]
 binding = "BOT_KV"
-id = ""
 
 # DraftMonitor: polls the draft board sub-minute while a draft is live
 # (armed via /draftalerts). SQLite-backed — available on the free plan.
@@ -38,7 +39,8 @@ tag = "v1"
 new_sqlite_classes = ["DraftMonitor"]
 
 [vars]
-# Your Discord server ID (Developer Mode on → right-click server → Copy ID):
+# Your Discord server ID (Developer Mode on → right-click server → Copy ID).
+# Commands register here, and the Worker rejects commands from other guilds:
 DISCORD_GUILD_ID = ""
 # The number in your league URL: fleaflicker.com/nfl/leagues/<this>
 FLEAFLICKER_LEAGUE_ID = ""
@@ -59,7 +61,9 @@ FANTASYCALC_NUM_QBS = ""
 FANTASYCALC_NUM_TEAMS = ""
 FANTASYCALC_PPR = ""
 
-# Secrets (set with `wrangler secret put <NAME>`):
-#   DISCORD_TOKEN           — bot token (channel posts)
-#   DISCORD_PUBLIC_KEY      — app public key (interaction signature verification)
-#   DISCORD_APPLICATION_ID  — application ID (webhook follow-ups)
+# Secrets — the Worker needs exactly TWO (set with `wrangler secret put <NAME>`):
+#   DISCORD_TOKEN       — bot token (channel posts + DMs)
+#   DISCORD_PUBLIC_KEY  — app public key (interaction signature verification)
+# DISCORD_APPLICATION_ID is NOT a Worker secret: every interaction carries its
+# own application_id, which the Worker uses for follow-ups. It belongs in the
+# local .env used by the scripts (see env.register.example).

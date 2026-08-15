@@ -13,6 +13,9 @@ if (!token) {
   process.exit(1);
 }
 
+// This is your bot's About Me text — edit it freely. The repo link is here as
+// attribution for the upstream template, not a requirement; drop it, or point
+// it at your own fork, whatever suits your league.
 const DESCRIPTION = [
   'Dynasty league assistant for Fleaflicker — live scores, standings,',
   'rosters, trade and waiver alerts, weekly recaps, and draft-turn DMs.',

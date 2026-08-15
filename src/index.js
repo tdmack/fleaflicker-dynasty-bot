@@ -1,4 +1,4 @@
-// Fleaflicker Discord Bot v5 — Cloudflare Worker entry point.
+// Fleaflicker Dynasty Bot — Cloudflare Worker entry point.
 //
 // fetch:     Discord interactions endpoint (slash commands over HTTPS).
 //            Every command is ACKed with a deferred response immediately,
@@ -23,7 +23,7 @@ const InteractionType = { PING: 1, APPLICATION_COMMAND: 2 };
 const ResponseType = { PONG: 1, CHANNEL_MESSAGE: 4, DEFERRED_CHANNEL_MESSAGE: 5 };
 const EPHEMERAL = 64;
 
-// Per-user cooldown. Kept in isolate memory (like v4's process Map): a KV
+// Per-user cooldown. Kept in isolate memory rather than KV: a KV
 // round-trip is slower than the 5s window is worth, KV's eventual consistency
 // can't enforce it anyway, and a best-effort courtesy throttle doesn't need
 // durable storage. Repeat requests usually hit a warm isolate at the same edge.
@@ -91,6 +91,36 @@ export default {
           type: ResponseType.CHANNEL_MESSAGE,
           data: { content: 'Unknown command.', flags: EPHEMERAL },
         });
+      }
+
+      // Guild pinning: commands are registered per-guild, but a copy of them
+      // can linger in another server the app was invited to. Refuse anything
+      // that didn't come from the configured guild.
+      if (interaction.guild_id && env.DISCORD_GUILD_ID && interaction.guild_id !== env.DISCORD_GUILD_ID) {
+        return json({
+          type: ResponseType.CHANNEL_MESSAGE,
+          data: {
+            content: 'This bot instance is configured for a different server.',
+            flags: EPHEMERAL,
+          },
+        });
+      }
+
+      // Permission backstop. Discord enforces default_member_permissions on its
+      // side, but a server admin can override it per-command in Integrations
+      // settings — so re-check it here, where it can't be clicked away.
+      if (command.definition?.default_member_permissions) {
+        const need = BigInt(command.definition.default_member_permissions);
+        const have = BigInt(interaction.member?.permissions || '0');
+        if ((have & need) !== need) {
+          return json({
+            type: ResponseType.CHANNEL_MESSAGE,
+            data: {
+              content: 'You need the Manage Server permission for this command.',
+              flags: EPHEMERAL,
+            },
+          });
+        }
       }
 
       // Rate limit: 5 seconds per user across all commands (best-effort)

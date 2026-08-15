@@ -1,5 +1,6 @@
 // Arm/disarm the DraftMonitor Durable Object (admin-only). Arm this when a
-// draft opens; it disarms itself when the board fills or after 48 idle hours.
+// draft opens; it disarms itself when the board fills, after 48 idle hours, or
+// 7 days after arming (the hard ceiling in src/do/draftMonitor.js).
 
 import { getDraftMonitor } from '../lib/draftMonitorClient.js';
 import { getRegistrations } from '../lib/registrations.js';
@@ -42,7 +43,7 @@ export async function execute(interaction, env) {
       description: `Polling the draft board every 20 seconds.`
         + `\n• Updates post to ${channelId ? `<#${channelId}>` : '**no channel — set DISCORD_DRAFT_CHANNEL_ID**'}`
         + `\n• On-the-clock reminder after **${status.reminderMinutes} min**`
-        + `\n• Auto-disarms when the draft completes or after 48 idle hours`
+        + `\n• Auto-disarms when the draft completes, after 48 idle hours, or 7 days after arming`
         + `\n\nManagers get DMs only if they've run \`/register\`.`,
       color: COLORS.green,
     })] };

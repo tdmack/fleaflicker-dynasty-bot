@@ -81,7 +81,11 @@ export async function runTradeAlerts(env, {
       }
     } catch (err) {
       console.error(`[TradeAlerts] Failed to post trade ${entry.trade.id}:`, err.message);
-      // not recorded — retried next tick
+      // Stop the loop rather than hammering a Discord that just failed (a 429
+      // or outage hits the next trade too). Nothing posted after this point is
+      // added to `alerted`, so it stays out of the snapshot below and retries
+      // on the next tick — including this trade.
+      break;
     }
   }
 
@@ -89,7 +93,15 @@ export async function runTradeAlerts(env, {
   // page size), keeping any that failed to post out so they retry.
   const currentKeys = new Set(current.map(keyOf));
   const next = [...currentKeys].filter((k) => alerted.has(k));
-  await env.BOT_KV.put(KV_KEY, JSON.stringify(next));
+
+  // Steady state is "nothing changed" on almost every 15-minute tick, and the
+  // free plan allows only 1,000 KV writes/day. Skip the put when the snapshot
+  // is byte-identical to what's already stored. This key carries no TTL, so
+  // not writing can't let it expire.
+  const serialized = JSON.stringify(next);
+  if (serialized !== JSON.stringify(seenRaw)) {
+    await env.BOT_KV.put(KV_KEY, serialized);
+  }
 }
 
 function keyOf(entry) {

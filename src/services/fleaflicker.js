@@ -6,6 +6,9 @@
 
 const BASE_URL = 'https://www.fleaflicker.com/api';
 const REQUEST_TIMEOUT_MS = 15000;
+// Identify ourselves to Fleaflicker — an unattributed bot is the first thing
+// an API owner blocks when traffic looks odd.
+const USER_AGENT = 'fleaflicker-dynasty-bot (https://github.com/tdmack/fleaflicker-dynasty-bot)';
 
 // Errors flagged `safe` carry a message fit for users; the top-level handler
 // in src/index.js shows them verbatim instead of the generic fallback.
@@ -34,7 +37,10 @@ async function get(env, endpoint, params = {}) {
 
   let response;
   try {
-    response = await fetch(url, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+    response = await fetch(url, {
+      headers: { 'User-Agent': USER_AGENT },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
   } catch (err) {
     if (err.name === 'TimeoutError' || err.name === 'AbortError') {
       throw safeError('Request timed out — Fleaflicker may be slow, please try again');

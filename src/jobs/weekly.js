@@ -4,8 +4,8 @@
 // (tracked in KV). The preview for the next week posts after its predecessor's
 // recap. In the offseason both gates stay closed and the job exits silently.
 //
-// All-play/luck and coach-rating semantics are adapted from Dynasty Command
-// Center's week-in-review slice (phase-7.6-m5): all-play compares every team
+// All-play/luck and coach-rating semantics are adapted from the Dynasty
+// Command Center week-in-review design: all-play compares every team
 // against all others each week; luck = actual win% − all-play win%; coach
 // rating = actual ÷ Fleaflicker-computed optimum, never fabricated when the
 // optimum is missing or zero, clamped at 100% when the payload is inconsistent.
@@ -22,15 +22,35 @@ import { postChannelMessage } from '../lib/discord.js';
 import { seasonHasStarted, nflSeasonYear } from '../lib/season.js';
 
 const KV_TTL = 60 * 86400; // posted-markers expire after ~2 months
+// Historical scoreboards are fetched in small batches rather than all at once:
+// a week-14 recap would otherwise open 13 concurrent subrequests in one burst.
+const HISTORY_BATCH = 4;
 
 const recapKey = (season, week) => `weekly:recap:${season}:${week}`;
 const previewKey = (season, week) => `weekly:preview:${season}:${week}`;
+const scoreboardCacheKey = (season, week) => `weekly:scoreboard:${season}:${week}`;
 
-export async function runWeekly(env) {
+// Injectable seams — production callers omit `deps` entirely. Tests pass fakes
+// (same pattern as src/jobs/transactionFeed.js) to drive the job without
+// network access.
+const DEFAULT_DEPS = {
+  fetchScoreboard: fetchLeagueScoreboard,
+  fetchStandings: fetchLeagueStandings,
+  fetchBoxscore: fetchLeagueBoxscore,
+  fetchTransactions: fetchLeagueTransactions,
+  post: postChannelMessage,
+  recap: postRecap, // hoisted function declarations — safe to reference here
+  preview: postPreview,
+};
+
+const withDefaults = (deps) => ({ ...DEFAULT_DEPS, ...deps });
+
+export async function runWeekly(env, deps = {}) {
+  const d = withDefaults(deps);
   const channelId = env.DISCORD_RECAP_CHANNEL_ID || env.DISCORD_TRADE_CHANNEL_ID;
   if (!channelId) return;
 
-  const current = await fetchLeagueScoreboard(env);
+  const current = await d.fetchScoreboard(env);
   const games = current.games || [];
   const currentWeek = Number(current.schedulePeriod?.value) || 0;
   // The scoreboard can omit its season fields (observed offseason); fall back
@@ -50,10 +70,10 @@ export async function runWeekly(env) {
       recappedWeek = w;
       break;
     }
-    const sb = w === currentWeek ? current : await fetchLeagueScoreboard(env, w);
+    const sb = w === currentWeek ? current : await d.fetchScoreboard(env, w);
     const wGames = sb.games || [];
     if (wGames.length > 0 && wGames.every((g) => g.isFinalScore)) {
-      await postRecap(env, channelId, season, w, sb);
+      await d.recap(env, channelId, season, w, sb, undefined, deps);
       recappedWeek = w;
       break;
     }
@@ -68,7 +88,7 @@ export async function runWeekly(env) {
   if (anchored && notStarted) {
     const key = previewKey(season, currentWeek);
     if (!(await env.BOT_KV.get(key))) {
-      await postPreview(env, channelId, currentWeek, games);
+      await d.preview(env, channelId, currentWeek, games, deps);
       await env.BOT_KV.put(key, 'posted', { expirationTtl: KV_TTL });
     }
   }
@@ -78,11 +98,12 @@ export async function runWeekly(env) {
 
 // apiSeason is normally undefined (Fleaflicker defaults to the current
 // season); /testweekly passes an explicit historical season.
-export async function postRecap(env, channelId, season, week, scoreboard, apiSeason) {
+export async function postRecap(env, channelId, season, week, scoreboard, apiSeason, deps = {}) {
+  const d = withDefaults(deps);
   const games = scoreboard.games || [];
 
   // Standings is needed by both messages — fetch before message 1
-  const standings = await fetchLeagueStandings(env, apiSeason);
+  const standings = await d.fetchStandings(env, apiSeason);
   const actualByTeam = new Map();
   for (const div of (standings.divisions || [])) {
     for (const t of (div.teams || [])) {
@@ -129,7 +150,7 @@ export async function postRecap(env, channelId, season, week, scoreboard, apiSea
     .sort((a, b) => (b.winPct ?? 0) - (a.winPct ?? 0))
     .map((t, i) => `**${i + 1}.** ${t.name} — ${t.record} | PF: ${t.pointsFor}`);
 
-  await postChannelMessage(env, channelId, {
+  await d.post(env, channelId, {
     embeds: [
       createEmbed({
         title: `📅 Week ${week} in Review`,
@@ -150,7 +171,7 @@ export async function postRecap(env, channelId, season, week, scoreboard, apiSea
   await env.BOT_KV.put(recapKey(season, week), 'posted', { expirationTtl: KV_TTL });
 
   try {
-    await postRecapMetrics(env, channelId, week, scoreboard, actualByTeam, apiSeason);
+    await postRecapMetrics(env, channelId, season, week, scoreboard, actualByTeam, apiSeason, d);
   } catch (err) {
     // Logged, not retried — the dedupe marker above already committed us
     console.error(`[Weekly] Metrics message for week ${week} failed:`, err.message);
@@ -159,13 +180,13 @@ export async function postRecap(env, channelId, season, week, scoreboard, apiSea
 }
 
 // Message 2: all-play/luck + coach ratings + top scorers + transactions
-async function postRecapMetrics(env, channelId, week, scoreboard, actualByTeam, apiSeason) {
+async function postRecapMetrics(env, channelId, season, week, scoreboard, actualByTeam, apiSeason, d) {
   const games = scoreboard.games || [];
 
   // Boxscores (coach ratings + top scorers) — independent, fetch in parallel
   const teamPoints = new Map(); // teamId -> { name, actual, optimum }
   const playerScores = [];
-  const boxes = await Promise.allSettled(games.map((g) => fetchLeagueBoxscore(env, g.id)));
+  const boxes = await Promise.allSettled(games.map((g) => d.fetchBoxscore(env, g.id)));
   boxes.forEach((res, i) => {
     if (res.status !== 'fulfilled') {
       console.error(`[Weekly] Boxscore ${games[i].id} failed:`, res.reason?.message);
@@ -176,28 +197,40 @@ async function postRecapMetrics(env, channelId, week, scoreboard, actualByTeam, 
     collectPlayers(playerScores, res.value, games[i]);
   });
 
-  // All-play per week, accumulated season-to-date (historical weeks are
-  // immutable, so parallel fetches are safe)
+  // All-play per week, accumulated season-to-date. Historical weeks are
+  // immutable, so each one is cached in KV and fetched at most once ever;
+  // uncached weeks go out in small batches rather than one big burst.
   const priorWeeks = Array.from({ length: week - 1 }, (_, i) => i + 1);
-  const priorBoards = await Promise.allSettled(
-    priorWeeks.map((w) => fetchLeagueScoreboard(env, w, apiSeason)),
-  );
+  const priorScores = [];
+  let historyComplete = true;
+  for (let i = 0; i < priorWeeks.length; i += HISTORY_BATCH) {
+    const batch = priorWeeks.slice(i, i + HISTORY_BATCH);
+    const results = await Promise.allSettled(
+      batch.map((w) => historicalWeekScores(env, season, w, apiSeason, d)),
+    );
+    results.forEach((res, j) => {
+      if (res.status === 'fulfilled') priorScores.push(res.value);
+      else {
+        // A missing week understates every team's all-play record, so the
+        // section is dropped entirely rather than published wrong.
+        historyComplete = false;
+        console.error(`[Weekly] Week ${batch[j]} scoreboard failed:`, res.reason?.message);
+      }
+    });
+  }
+
   const seasonAllPlay = new Map(); // teamId -> { name, w, l, t }
-  const accumulate = (sb) => {
-    const finals = (sb.games || []).filter((g) => g.isFinalScore);
-    if (finals.length === 0) return;
-    for (const [id, rec] of allPlayForGames(finals)) {
+  const accumulate = (scores) => {
+    if (scores.length === 0) return;
+    for (const [id, rec] of allPlayForScores(scores)) {
       const acc = seasonAllPlay.get(id) || { name: rec.name, w: 0, l: 0, t: 0 };
       acc.w += rec.w; acc.l += rec.l; acc.t += rec.t;
       acc.name = rec.name;
       seasonAllPlay.set(id, acc);
     }
   };
-  priorBoards.forEach((res, i) => {
-    if (res.status === 'fulfilled') accumulate(res.value);
-    else console.error(`[Weekly] Week ${priorWeeks[i]} scoreboard failed:`, res.reason?.message);
-  });
-  accumulate(scoreboard);
+  for (const scores of priorScores) accumulate(scores);
+  accumulate(weekScores(games));
 
   // Luck in wins: actual wins minus what the all-play rate deserved over the
   // games actually played. Sums to ~0 league-wide. (Standard "expected wins"
@@ -240,17 +273,22 @@ async function postRecapMetrics(env, channelId, week, scoreboard, actualByTeam, 
     .slice(0, 5)
     .map((p, i) => `**${i + 1}.** ${p.name} (${p.position}) — ${p.points.toFixed(1)} pts *(${p.teamName})*`);
 
-  const txLines = await weekTransactionDigest(env);
+  const txLines = await weekTransactionDigest(env, d);
 
-  const embeds = [
-    createEmbed({
+  const embeds = [];
+  if (historyComplete) {
+    embeds.push(createEmbed({
       title: '🍀 Luck Report (All-Play)',
       description: allPlayLines.length > 0
         ? truncate(allPlayExplainer + allPlayLines.join('\n'), 4000)
         : 'Not enough data yet.',
       color: COLORS.teal,
       footer: 'Rule of thumb: past ±1.5 wins of luck you may officially complain',
-    }),
+    }));
+  } else {
+    console.log(`[Weekly] Omitting the all-play/luck section for week ${week} — a prior week's scoreboard could not be fetched`);
+  }
+  embeds.push(
     createEmbed({
       title: '🎓 Coach Ratings',
       description: truncate(coachLines.join('\n'), 4000) || 'No lineup data available.',
@@ -262,7 +300,7 @@ async function postRecapMetrics(env, channelId, week, scoreboard, actualByTeam, 
       description: topScorers.join('\n') || 'No player scores available.',
       color: COLORS.green,
     }),
-  ];
+  );
   if (txLines.length > 0) {
     embeds.push(createEmbed({
       title: '🔄 The Week in Moves',
@@ -271,7 +309,44 @@ async function postRecapMetrics(env, channelId, week, scoreboard, actualByTeam, 
     }));
   }
 
-  await postChannelMessage(env, channelId, { embeds });
+  await d.post(env, channelId, { embeds });
+}
+
+/**
+ * Per-team scores for a completed historical week, from KV when available.
+ * Completed weeks are immutable, so the cache entry is written without a TTL —
+ * it never goes stale, and in steady state the recap fetches exactly one new
+ * week per week instead of the whole season.
+ *
+ * A week only counts (and only gets cached) when EVERY game is final. A
+ * successful fetch of a week that is empty or still has a game in progress —
+ * a postponed game, say — would otherwise both understate the all-play totals
+ * without tripping the completeness gate AND freeze those partial scores in a
+ * TTL-less key forever. Rejecting instead routes it to the same
+ * historyComplete=false path as a failed fetch.
+ */
+async function historicalWeekScores(env, season, week, apiSeason, d) {
+  const key = scoreboardCacheKey(season, week);
+  try {
+    const cached = await env.BOT_KV.get(key, 'json');
+    if (Array.isArray(cached)) return cached;
+  } catch (err) {
+    console.error(`[Weekly] Scoreboard cache read for week ${week} failed:`, err.message);
+  }
+
+  const sb = await d.fetchScoreboard(env, week, apiSeason);
+  const games = sb.games || [];
+  if (games.length === 0 || !games.every((g) => g.isFinalScore)) {
+    throw new Error(`week ${week} is not fully final`);
+  }
+
+  const scores = weekScores(games);
+  try {
+    await env.BOT_KV.put(key, JSON.stringify(scores));
+  } catch (err) {
+    console.error(`[Weekly] Scoreboard cache write for week ${week} failed:`, err.message);
+  }
+  return scores;
 }
 
 function collectSide(teamPoints, team, points) {
@@ -305,14 +380,20 @@ function collectPlayers(playerScores, box, game) {
   }
 }
 
-// DCC all_play.py semantics: each team vs every other team that played that
-// week. Both perspectives of each pair are counted, giving per-team records.
-function allPlayForGames(games) {
+// Flatten a week's final games into the per-team scores the all-play math
+// needs. This is also the shape cached in KV, so it must stay JSON-plain.
+function weekScores(games) {
   const scores = [];
-  for (const g of games) {
+  for (const g of games.filter((game) => game.isFinalScore)) {
     if (g.home) scores.push({ id: String(g.home.id), name: g.home.name, pts: g.homeScore?.score?.value ?? 0 });
     if (g.away) scores.push({ id: String(g.away.id), name: g.away.name, pts: g.awayScore?.score?.value ?? 0 });
   }
+  return scores;
+}
+
+// All-play semantics: each team vs every other team that played that
+// week. Both perspectives of each pair are counted, giving per-team records.
+function allPlayForScores(scores) {
   const records = new Map();
   for (const t of scores) records.set(t.id, { name: t.name, w: 0, l: 0, t: 0 });
   for (const a of scores) {
@@ -332,7 +413,7 @@ function allPlayPct(rec) {
   return total > 0 ? (rec.w + rec.t / 2) / total : 0;
 }
 
-// DCC coach_rating.py semantics: no rating when optimum is missing or zero;
+// Coach-rating semantics: no rating when optimum is missing or zero;
 // clamp >100% (payload inconsistency) rather than reporting the anomaly.
 function coachRating(actual, optimum) {
   if (typeof actual !== 'number' || typeof optimum !== 'number' || optimum === 0) return null;
@@ -363,9 +444,9 @@ function gameLabel(g) {
   return `${g.home?.name || 'Home'} vs ${g.away?.name || 'Away'}`;
 }
 
-async function weekTransactionDigest(env) {
+async function weekTransactionDigest(env, d) {
   try {
-    const data = await fetchLeagueTransactions(env);
+    const data = await d.fetchTransactions(env);
     const cutoff = Date.now() - 7 * 86400 * 1000;
     return (data.items || [])
       .filter((item) => Number(item.timeEpochMilli) >= cutoff)
@@ -389,7 +470,8 @@ async function weekTransactionDigest(env) {
 
 // ---------------------------------------------------------------- preview
 
-export async function postPreview(env, channelId, week, games) {
+export async function postPreview(env, channelId, week, games, deps = {}) {
+  const d = withDefaults(deps);
   const lines = games.map((g) => {
     const hn = g.home?.name || 'Home';
     const an = g.away?.name || 'Away';
@@ -402,7 +484,7 @@ export async function postPreview(env, channelId, week, games) {
     return line;
   });
 
-  await postChannelMessage(env, channelId, {
+  await d.post(env, channelId, {
     embeds: [createEmbed({
       title: `🔮 Week ${week} Preview`,
       description: truncate(lines.join('\n\n'), 4000) || 'No matchups found.',

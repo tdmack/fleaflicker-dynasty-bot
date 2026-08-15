@@ -2,10 +2,12 @@ import { fetchLeagueRules } from '../services/fleaflicker.js';
 import { createEmbed, truncate, COLORS } from '../utils/formatters.js';
 import { getOption } from '../lib/options.js';
 
-// Exact starter slot labels this league uses — allowlist to avoid showing D/ST, IL, K, etc.
+// This bot targets QB/RB/WR/TE/FLEX dynasty leagues (see README "League-type
+// assumptions"): an allowlist of starter slot labels, so D/ST, IL, K, etc.
+// never render.
 const ALLOWED_START_LABELS = new Set(['QB', 'RB', 'WR', 'RB/WR', 'TE', 'RB/WR/TE', 'QB/RB/WR/TE']);
 
-// Scoring groups relevant to this league
+// Scoring groups shown for those leagues
 const SHOW_SCORING_GROUPS = ['Passing', 'Rushing', 'Receiving', 'Misc'];
 
 export const definition = {

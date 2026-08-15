@@ -6,6 +6,12 @@ const token = process.env.DISCORD_TOKEN;
 const appId = process.env.DISCORD_APPLICATION_ID;
 const guildId = process.env.DISCORD_GUILD_ID;
 
+// The permission set the README's OAuth2 instructions ask for. Keep the two in
+// sync — a mismatch is how people end up with a bot that can't post.
+//   VIEW_CHANNEL 1024 + SEND_MESSAGES 2048 + EMBED_LINKS 16384
+//   + READ_MESSAGE_HISTORY 65536 = 84992
+const INVITE_PERMISSIONS = 84992;
+
 if (!token || !appId || !guildId) {
   console.error('Missing DISCORD_TOKEN, DISCORD_APPLICATION_ID, or DISCORD_GUILD_ID in .env');
   process.exit(1);
@@ -40,7 +46,7 @@ if (!inGuild) {
   console.error(`NOT IN SERVER: this bot is not a member of guild ${guildId}.`);
   console.error(`It is in: ${list.map((g) => `"${g.name}" (${g.id})`).join(', ') || '(no servers)'}`);
   console.error('Fix: open the invite link for THIS app and authorize it into your league server:');
-  console.error(`https://discord.com/api/oauth2/authorize?client_id=${appId}&scope=bot%20applications.commands&permissions=83968`);
+  console.error(`https://discord.com/api/oauth2/authorize?client_id=${appId}&scope=bot%20applications.commands&permissions=${INVITE_PERMISSIONS}`);
   process.exit(1);
 }
 console.log(`Bot is a member of "${inGuild.name}" (${guildId}). ✔`);

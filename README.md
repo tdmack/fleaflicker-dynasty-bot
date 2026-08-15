@@ -1,8 +1,7 @@
 # Fleaflicker Dynasty Bot
 
-A Discord bot for **dynasty NFL fantasy leagues on Fleaflicker** — the first
-publicly available one. Runs entirely on a **free Cloudflare Workers account**:
-no server to rent, no process to keep alive, nothing that sleeps. You deploy
+A Discord bot for **dynasty NFL fantasy leagues on Fleaflicker** — self-hosted
+on Cloudflare's free tier, no server to rent, nothing that sleeps. You deploy
 your own copy, wired to your own league and Discord server, in about 15
 minutes.
 
@@ -28,7 +27,9 @@ minutes.
 | `/player <name>` | Player card with status, injury, news |
 | `/value [player]` | Dynasty trade values (FantasyCalc) |
 | `/register <team>` | Link your Discord account to your Fleaflicker team (draft-turn DMs) |
-| `/draftalerts <action>` | Arm/disarm draft-turn alerts (commissioner only) |
+| `/draftalerts <action> [reminder_minutes]` | Arm/disarm draft-turn alerts (Manage Server) |
+| `/testalert` | Post a test message to the alert channel (Manage Server) |
+| `/testweekly [week]` | Post a sample Week in Review from last season's data (Manage Server) |
 
 All replies are private (ephemeral) by default; add `public:True` to post to
 the channel. `/testalert`, `/testweekly`, and `/draftalerts` require the
@@ -50,7 +51,8 @@ Manage Server permission.
 - **Week Preview** — posted once per week after the previous recap: matchups
   with projections. Posts go to `DISCORD_RECAP_CHANNEL_ID` (falls back to the
   trade channel). In the offseason nothing posts.
-- **Players to Monitor** — Thursday and Sunday mornings (11am ET) during the
+- **Players to Monitor** — Thursday and Sunday mornings (11am EDT — 10am EST
+  after the clocks change, since the cron is fixed at 15:00 UTC) during the
   season: every starting lineup is checked for injured starters
   (OUT/doubtful/questionable), starters on bye, and **empty starting slots**.
   Thursday catches TNF starters before their early lock. Posts to
@@ -70,11 +72,13 @@ Object then polls the draft board every 20 seconds and posts each pick,
 announces who is **on the clock** (with an @mention), and **DMs the
 on-the-clock manager** — Discord DMs trigger free mobile push notifications,
 so no SMS is needed. A reminder DM goes out if the same manager is still up
-after 30 minutes (configurable via `reminder_minutes`). Managers opt in with
+after 30 minutes. That gap is set per-arming with the `reminder_minutes` option
+on `/draftalerts action:on` (5–720 minutes; it sticks until the monitor is
+re-armed with a different value). Managers opt in with
 `/register team:<name>`, which sends a test DM immediately so blocked-DM
 privacy settings surface at signup, not on draft night. The monitor disarms
-itself when the board fills or after 48 idle hours, so it costs nothing
-between drafts. Updates post to `DISCORD_DRAFT_CHANNEL_ID` (falls back to the
+itself when the draft completes, after 48 idle hours, or 7 days after arming,
+so it costs nothing between drafts. Updates post to `DISCORD_DRAFT_CHANNEL_ID` (falls back to the
 trade channel).
 
 ---
@@ -90,7 +94,8 @@ and Manage Server permission on the Discord server you're deploying into.
 1. [Discord Developer Portal](https://discord.com/developers/applications) → **New Application**
 2. **Bot** tab → Reset/copy the Token → this is `DISCORD_TOKEN`
 3. **OAuth2 → URL Generator**: scopes = `bot` + `applications.commands`;
-   permissions: Send Messages, Embed Links → open the generated URL and
+   permissions: **View Channel, Send Messages, Embed Links, Read Message
+   History** (that's the integer `84992`) → open the generated URL and
    authorize the bot into your server
 4. **General Information** → copy the **Application ID**
    (`DISCORD_APPLICATION_ID`) and **Public Key** (`DISCORD_PUBLIC_KEY`)
@@ -117,20 +122,24 @@ cd fleaflicker-dynasty-bot
 npm install
 ```
 
-### 3. Set the three secrets
+### 3. Set the two secrets
 
-Secrets are never stored in the repo. Either run:
+The Worker needs exactly two secrets, and they are never stored in the repo:
 
 ```bash
 npx wrangler secret put DISCORD_TOKEN
 npx wrangler secret put DISCORD_PUBLIC_KEY
-npx wrangler secret put DISCORD_APPLICATION_ID
 ```
 
 If you haven't run `npx wrangler login` yet, the first `secret put` opens a
-browser to authorize the Cloudflare CLI. Alternatively, add all three in the
+browser to authorize the Cloudflare CLI. Alternatively, add both in the
 Cloudflare dashboard under your Worker → **Settings → Variables** (as encrypted
 secrets, not plaintext vars).
+
+`DISCORD_APPLICATION_ID` is deliberately *not* a Worker secret — every
+interaction Discord sends carries its own `application_id`, which the Worker
+uses for follow-ups. It belongs in the local `.env` used by the scripts in
+step 6.
 
 ### 4. Fill in `[vars]` and push
 
@@ -158,9 +167,12 @@ must have finished first.
 ### 6. Register the slash commands
 
 ```bash
-cp .env.example .env   # fill in DISCORD_TOKEN, DISCORD_APPLICATION_ID, DISCORD_GUILD_ID
+cp env.register.example .env   # fill in DISCORD_TOKEN, DISCORD_APPLICATION_ID, DISCORD_GUILD_ID
 npm run register
 ```
+
+This `.env` is local-only — it's what `npm run register`, `npm run brand`, and
+`npm run diagnose` read. The deployed Worker never sees it.
 
 Commands register per-guild, so they appear instantly. Re-run this any time you
 change command definitions.
@@ -197,8 +209,9 @@ npx wrangler login
 npx wrangler kv namespace create BOT_KV
 ```
 
-Copy the returned `id` into `wrangler.toml` under `[[kv_namespaces]]`, fill in
-`[vars]`:
+Add the returned `id` to `wrangler.toml` under `[[kv_namespaces]]` as
+`id = "<the id>"` (the checked-in config omits the key so the Deploy button can
+auto-provision it), then fill in `[vars]`:
 
 ```toml
 [vars]
@@ -208,7 +221,7 @@ DISCORD_GUILD_ID = "<your-server-id>"
 DISCORD_TRADE_CHANNEL_ID = "<your-trade-channel-id>"
 ```
 
-set the three secrets as in step 3, and deploy:
+set the two secrets as in step 3, and deploy:
 
 ```bash
 npx wrangler deploy
@@ -228,7 +241,7 @@ Mode on: right-click → Copy ID):
 |---|---|---|
 | `FLEAFLICKER_LEAGUE_ID` | yes | The number in your league URL: `fleaflicker.com/nfl/leagues/<this>` |
 | `FLEAFLICKER_SPORT` | no — defaults to `NFL` | `NFL` |
-| `DISCORD_GUILD_ID` | yes | Your Discord server ID (commands register per-guild — instant) |
+| `DISCORD_GUILD_ID` | yes | Your server ID — commands register here, and the Worker rejects commands arriving from other guilds |
 | `DISCORD_TRADE_CHANNEL_ID` | for crons | Channel for trade alerts + transaction feed |
 | `DISCORD_RECAP_CHANNEL_ID` | no | Weekly recap/preview + Players to Monitor channel (falls back to trade channel) |
 | `DISCORD_DRAFT_CHANNEL_ID` | no | Draft alert channel (falls back to trade channel) |
@@ -238,8 +251,18 @@ Mode on: right-click → Copy ID):
 | `FANTASYCALC_NUM_TEAMS` | no | default `12` |
 | `FANTASYCALC_PPR` | no | default `0.5` |
 
-Secrets (set with `npx wrangler secret put <NAME>`): `DISCORD_TOKEN`,
-`DISCORD_PUBLIC_KEY`, `DISCORD_APPLICATION_ID`.
+**Worker secrets** (set with `npx wrangler secret put <NAME>`) — exactly two:
+`DISCORD_TOKEN` and `DISCORD_PUBLIC_KEY`.
+
+**Local `.env`** (copied from `env.register.example`, never deployed) —
+`DISCORD_TOKEN`, `DISCORD_APPLICATION_ID`, and `DISCORD_GUILD_ID`, read by
+`npm run register`, `npm run brand`, and `npm run diagnose`.
+
+> ⚠️ **Changing a cron schedule takes two edits.** The three cron strings in
+> `wrangler.toml` under `[triggers]` are matched *literally* against
+> `event.cron` in the `scheduled` handler in `src/index.js`. Change one place
+> only and the job stops running silently — the Worker logs an unknown-cron
+> error and does nothing. Update both, or your recaps just never arrive.
 
 ## League-type assumptions
 
@@ -268,6 +291,45 @@ Built for **dynasty** leagues with **QB/RB/WR/TE/FLEX** starting slots:
   (no posts) by design. Check Worker logs in the Cloudflare dashboard.
 - **`/value` numbers look wrong for your league** — set the `FANTASYCALC_*`
   vars to your league's shape.
+- **Command registration fails with "Missing Access"** — run
+  `npm run diagnose`. It checks that your `.env` token and
+  `DISCORD_APPLICATION_ID` belong to the same Discord application, and that
+  the bot is actually a member of `DISCORD_GUILD_ID`, printing a correct
+  invite link if it isn't. Those are the two causes.
+- **Your Worker URL is a public endpoint.** Anyone can POST to it. Discord
+  signature verification rejects everything that isn't genuinely from Discord,
+  so this is not a data risk — but the rejected requests still count against
+  the free plan's 100k requests/day. If that ever worries you, add a free
+  Cloudflare rate-limiting rule in front of the Worker.
+- **Lock the bot down to yourself** — in the Developer Portal → your app →
+  **Bot**, consider turning **Public Bot** OFF. Then only you can invite it to
+  a server, which is what you want for a self-hosted league bot.
+
+## What the bot stores
+
+Everything lives in **your own Cloudflare account**, in the `BOT_KV` namespace
+your deploy created. Nothing is sent anywhere else; there is no shared backend
+and no telemetry.
+
+| Key | What's in it |
+|---|---|
+| `draft:registrations:v1` | Discord user ID ↔ Fleaflicker team registrations from `/register` |
+| `dm:channel:<user id>` | Cached DM channel ids (30-day TTL) |
+| `teams:v2` | League team-name cache |
+| `trades:seen`, `txfeed:seen:<mode>` | Cron dedup snapshots, so a trade or transaction posts once |
+| `weekly:recap:*`, `weekly:preview:*` | Posted-week markers (~2 month TTL) |
+| `weekly:scoreboard:<season>:<week>` | Per-week final team scores for the all-play/luck math, kept indefinitely (a completed week never changes) |
+| `fantasycalc:values:*` | Cached FantasyCalc dynasty values (6h TTL) |
+
+The only personal data is a Discord user ID paired with a team name, written
+when someone runs `/register`. To remove a user, either have them (or a
+commissioner) re-run `/register`, or clear all registrations with:
+
+```bash
+npx wrangler kv key delete --binding=BOT_KV draft:registrations:v1
+```
+
+That deletes *every* registration, not one — managers just re-run `/register`.
 
 ---
 
@@ -300,6 +362,7 @@ Built for **dynasty** leagues with **QB/RB/WR/TE/FLEX** starting slots:
 ├── wrangler.toml            # Worker config: crons, KV + DO bindings, vars
 ├── deploy-commands.js       # Local script: registers the slash commands
 ├── scripts/brand.js         # Local script: sets the app's avatar + About Me
+├── scripts/diagnose.js      # Local script: checks token/app/guild wiring
 ├── assets/icon.png          # Default bot avatar (swap in your own art)
 ├── src/
 │   ├── index.js             # fetch (interactions) + scheduled (crons) + DO export
@@ -319,13 +382,16 @@ Built for **dynasty** leagues with **QB/RB/WR/TE/FLEX** starting slots:
 
 ```bash
 npm test                            # unit tests (node:test, no network)
-npx wrangler dev                    # local server (uses real KV bindings with --remote)
+npx wrangler dev                    # local server, local KV
+npx wrangler dev --remote           # local server against your real KV namespace
 npx wrangler dev --test-scheduled   # then: curl "http://localhost:8787/__scheduled?cron=*%2F15+*+*+*+*"
 npx wrangler tail                   # live logs from the deployed Worker
 ```
 
-`npm test` relies on glob support in `node --test`, which needs Node 21+; the
-bot itself only needs the documented Node 20.6+ floor.
+## Support
+
+Something broken, or missing a command you want? Open a GitHub issue. Pull
+requests are welcome too — it's MIT, so fork freely.
 
 ## License
 

@@ -1,17 +1,23 @@
 import { fetchPlayerListing } from '../services/fleaflicker.js';
-import { createEmbed, positionColor, COLORS } from '../utils/formatters.js';
+import { createEmbed, positionColor, truncate, COLORS } from '../utils/formatters.js';
 import { getOption } from '../lib/options.js';
+
+// Discord caps embed titles at 256 chars. The `name` option is capped at 100 by
+// the definition below, but truncate defensively anyway — an over-long title
+// makes Discord reject the edit and strands the user on "thinking…".
+const TITLE_QUERY_MAX = 80;
 
 export const definition = {
   name: 'player',
   description: 'Look up a player card with status, ownership, injury, and news',
   options: [
-    { type: 3, name: 'name', description: 'Player name (partial OK)', required: true },
+    { type: 3, name: 'name', description: 'Player name (partial OK)', required: true, max_length: 100 },
   ],
 };
 
 export async function execute(interaction, env) {
   const nameQuery = getOption(interaction, 'name');
+  const safeQuery = truncate(nameQuery, TITLE_QUERY_MAX);
 
   const data = await fetchPlayerListing(env, { 'filter.query': nameQuery });
   const players = data.players || [];
@@ -19,7 +25,7 @@ export async function execute(interaction, env) {
   if (players.length === 0) {
     return {
       embeds: [createEmbed({
-        title: `🔍 Player Lookup — ${nameQuery}`,
+        title: `🔍 Player Lookup — ${safeQuery}`,
         description: `No player found matching **${nameQuery}**. Check spelling or try a partial name.`,
         color: COLORS.grey,
       })],
@@ -39,7 +45,7 @@ export async function execute(interaction, env) {
 
     return {
       embeds: [createEmbed({
-        title: `🔍 Multiple Players Found — "${nameQuery}"`,
+        title: `🔍 Multiple Players Found — "${safeQuery}"`,
         description: `Found ${players.length} players. Showing top 3:\n\n${list}\n\nTry a more specific name.`,
         color: COLORS.grey,
       })],

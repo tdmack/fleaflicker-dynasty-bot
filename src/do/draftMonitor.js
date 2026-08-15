@@ -8,9 +8,11 @@
 // Cron triggers bottom out at 1 minute — too coarse for a live draft clock —
 // so the DO self-schedules sub-minute alarms instead. The 15-min trade cron
 // doubles as a supervisor (ensureDraftMonitorAlarm) to heal a dead alarm
-// chain. Armed manually via /draftalerts when a draft opens (next: 2027);
-// disarms itself when the board fills or after IDLE_DISARM_MS without a
-// board change (a stalled/paused draft), so steady-state cost is zero.
+// chain. Armed manually via /draftalerts when a draft opens; it
+// disarms itself when the board fills, after IDLE_DISARM_MS without a
+// board change (a stalled/paused draft), or once an arming has lived
+// MAX_ARMED_MS — so steady-state cost is zero. Those lifetime checks live in
+// alarm(), not poll(), so they still fire when every poll is failing.
 //
 // The Fleaflicker API exposes no pick deadline, so the reminder timer runs
 // from when THIS poller first saw the turn start — accurate to one poll.
@@ -24,6 +26,16 @@ import { createEmbed, truncate, COLORS } from '../utils/formatters.js';
 
 const POLL_MS = 20 * 1000;
 const IDLE_DISARM_MS = 48 * 3600 * 1000;
+// Hard ceiling on how long a single arming may live. A dynasty startup draft
+// can legitimately run for days (slow drafts with 8h clocks are normal), so
+// 7 days is generous — but without a ceiling a monitor whose polls always
+// fail (e.g. a misconfigured FLEAFLICKER_LEAGUE_ID) would never see a board
+// change, and the 15-min cron supervisor would keep healing it forever.
+const MAX_ARMED_MS = 7 * 24 * 3600 * 1000;
+// After this many consecutive poll() failures, slow the chain from 20s to 5m
+// so a sustained outage or misconfiguration stops burning 3 req/min.
+const MAX_CONSECUTIVE_FAILURES = 10;
+const FAILURE_BACKOFF_MS = 5 * 60 * 1000;
 const DEFAULT_REMINDER_MINUTES = 30;
 const MAX_PICKS_PER_UPDATE = 10;
 
@@ -41,6 +53,15 @@ export class DraftMonitor extends DurableObject {
       if (options.reminderMinutes) {
         await this.ctx.storage.put('reminderMinutes', options.reminderMinutes);
       }
+      // Re-arming during an outage is also how a commissioner asks for a fresh
+      // start: clear the failure backoff so polling returns to 20s, and pull a
+      // backed-off alarm forward instead of making them wait out the 5m gap.
+      // (On-the-clock state is deliberately left alone — see above.)
+      await this.ctx.storage.put('consecutiveFailures', 0);
+      const scheduled = await this.ctx.storage.getAlarm();
+      if (scheduled !== null && scheduled > now + POLL_MS) {
+        await this.ctx.storage.setAlarm(now + 1000);
+      }
       await this.ensureAlarm();
       return this.status();
     }
@@ -57,6 +78,7 @@ export class DraftMonitor extends DurableObject {
       lastPickDesc: null,
       turnStartedAt: null,
       reminded: false,
+      consecutiveFailures: 0,
     });
     await this.ctx.storage.setAlarm(now + 1000);
     return this.status();
@@ -91,16 +113,71 @@ export class DraftMonitor extends DurableObject {
 
   async alarm() {
     if (!(await this.ctx.storage.get('enabled'))) return;
+
+    let failed = false;
     try {
       await this.poll();
     } catch (err) {
       // Fleaflicker hiccup or Discord failure: log and keep the chain alive;
-      // the idle timeout is the backstop if the outage never ends.
+      // the lifetime guards below are the backstop if the outage never ends.
+      failed = true;
       console.error('[DraftMonitor] poll failed:', err.message);
     }
-    if (await this.ctx.storage.get('enabled')) {
-      await this.ctx.storage.setAlarm(Date.now() + POLL_MS);
+
+    const prevFailures = (await this.ctx.storage.get('consecutiveFailures')) || 0;
+    const failures = failed ? prevFailures + 1 : 0;
+    if (failures !== prevFailures) {
+      await this.ctx.storage.put('consecutiveFailures', failures);
     }
+    if (failures === MAX_CONSECUTIVE_FAILURES) {
+      console.warn(`[DraftMonitor] backing off to 5m after ${MAX_CONSECUTIVE_FAILURES} consecutive failures`);
+    }
+
+    // Lifetime guards run OUTSIDE poll() so they apply even when poll() threw:
+    // a permanently failing fetch used to poll forever because the staleness
+    // check lived after the fetch that was failing.
+    if (await this.checkLifetime()) return;
+
+    if (await this.ctx.storage.get('enabled')) {
+      const delay = failures >= MAX_CONSECUTIVE_FAILURES ? FAILURE_BACKOFF_MS : POLL_MS;
+      await this.ctx.storage.setAlarm(Date.now() + delay);
+    }
+  }
+
+  /**
+   * Disarm when the board has been idle past IDLE_DISARM_MS or this arming has
+   * outlived MAX_ARMED_MS. Returns true when it disarmed.
+   */
+  async checkLifetime() {
+    if (!(await this.ctx.storage.get('enabled'))) return false;
+    const now = Date.now();
+    const s = await this.ctx.storage.get(['armedAt', 'lastChangeAt']);
+    // start() seeds both, so the idle math is valid from tick one; the
+    // fallbacks only matter for a monitor armed by an older build.
+    const armedAt = s.get('armedAt') || now;
+    const lastChangeAt = s.get('lastChangeAt') || armedAt;
+    const idle = now - lastChangeAt >= IDLE_DISARM_MS;
+    const expired = now - armedAt >= MAX_ARMED_MS;
+    if (!idle && !expired) return false;
+
+    const channelId = this.env.DISCORD_DRAFT_CHANNEL_ID || this.env.DISCORD_TRADE_CHANNEL_ID;
+    if (channelId) {
+      const reason = idle
+        ? 'No draft activity for 48 hours'
+        : 'Draft alerts have been armed for 7 days';
+      try {
+        await this.postUpdate(channelId, [
+          `💤 ${reason} — draft alerts disarmed. Re-arm with \`/draftalerts action:on\`.`,
+        ]);
+      } catch (err) {
+        // A failed notice must never block the disarm itself.
+        console.error('[DraftMonitor] Disarm notice failed:', err.message);
+      }
+    }
+    await this.ctx.storage.put('enabled', false);
+    await this.ctx.storage.deleteAlarm();
+    console.log(`[DraftMonitor] ${idle ? 'Idle timeout' : 'Max armed lifetime'} — disarmed`);
+    return true;
   }
 
   async poll() {
@@ -109,7 +186,7 @@ export class DraftMonitor extends DurableObject {
     const now = Date.now();
     const s = await this.ctx.storage.get([
       'seeded', 'lastAnnouncedOverall', 'lastPickKey', 'turnStartedAt',
-      'reminded', 'reminderMinutes', 'lastChangeAt',
+      'reminded', 'reminderMinutes',
     ]);
 
     const board = parseDraftBoard(await fetchLeagueDraftBoard(env));
@@ -209,15 +286,9 @@ export class DraftMonitor extends DurableObject {
         const maxOverall = newPicks.reduce((m, p) => Math.max(m, p.overall || 0), lastAnnounced);
         await this.ctx.storage.put('lastAnnouncedOverall', maxOverall);
       }
-    } else if (now - (s.get('lastChangeAt') || now) >= IDLE_DISARM_MS) {
-      if (channelId) {
-        await this.postUpdate(channelId, [
-          '💤 No draft activity for 48 hours — draft alerts disarmed. Re-arm with `/draftalerts action:on`.',
-        ]);
-      }
-      await this.ctx.storage.put('enabled', false);
-      console.log('[DraftMonitor] Idle timeout — disarmed');
     }
+    // Staleness/lifetime disarm is decided in alarm() via checkLifetime(), so
+    // it still runs on a tick where this method threw before reaching here.
   }
 
   async postUpdate(channelId, lines) {

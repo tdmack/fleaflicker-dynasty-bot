@@ -1,15 +1,22 @@
 {
-  "name": "fleaflicker-discord-bot",
-  "version": "5.0.0",
+  "name": "fleaflicker-dynasty-bot",
+  "version": "1.0.0",
   "description": "Discord bot for dynasty NFL fantasy leagues on Fleaflicker — Cloudflare Workers",
   "type": "module",
   "main": "src/index.js",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tdmack/fleaflicker-dynasty-bot.git"
+  },
+  "homepage": "https://github.com/tdmack/fleaflicker-dynasty-bot#readme",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "register": "node --env-file=.env deploy-commands.js",
     "brand": "node --env-file=.env scripts/brand.js",
-    "test": "node --test \"test/**/*.test.js\""
+    "diagnose": "node --env-file=.env scripts/diagnose.js",
+    "test": "node --test"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"

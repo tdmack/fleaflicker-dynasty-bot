@@ -8,7 +8,7 @@ export const definition = {
   name: 'roster',
   description: 'Starting lineup for a team (QB/RB/WR/TE/FLEX only)',
   options: [
-    { type: 3, name: 'team', description: 'Team name (partial OK)', required: true },
+    { type: 3, name: 'team', description: 'Team name (partial OK)', required: true, max_length: 100 },
   ],
 };
 

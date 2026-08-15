@@ -8,7 +8,7 @@ export const definition = {
   name: 'matchup',
   description: "Full boxscore for a team's current matchup",
   options: [
-    { type: 3, name: 'team', description: 'Team name (partial OK)', required: true },
+    { type: 3, name: 'team', description: 'Team name (partial OK)', required: true, max_length: 100 },
   ],
 };
 

@@ -2,8 +2,33 @@
 
 const API = 'https://discord.com/api/v10';
 
+// Without a timeout a hung Discord connection can hold a cron invocation open
+// until the Worker's own limits kill it, taking the rest of the job with it.
+const TIMEOUT_MS = 10000;
+// Cap on how long we'll honor a 429's retry_after before giving up. Discord
+// can hand out multi-minute waits; a cron tick has better things to do.
+const MAX_RETRY_WAIT_MS = 5000;
+
 async function discordFetch(url, options) {
-  const res = await fetch(url, options);
+  let res = await fetch(url, { ...options, signal: AbortSignal.timeout(TIMEOUT_MS) });
+
+  // Rate limited — wait out the window Discord asks for (bounded) and retry
+  // exactly once. A second 429 falls through to the throw below.
+  if (res.status === 429) {
+    const body = await res.text().catch(() => '');
+    let retryAfterSeconds = 1;
+    try {
+      const parsed = Number(JSON.parse(body)?.retry_after);
+      if (Number.isFinite(parsed) && parsed > 0) retryAfterSeconds = parsed;
+    } catch {
+      // Non-JSON body (e.g. a Cloudflare-level 429) — keep the 1s default.
+    }
+    const waitMs = Math.min(retryAfterSeconds * 1000, MAX_RETRY_WAIT_MS);
+    console.warn(`[Discord] 429 rate limited — retrying once in ${waitMs}ms`);
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
+    res = await fetch(url, { ...options, signal: AbortSignal.timeout(TIMEOUT_MS) });
+  }
+
   if (!res.ok) {
     const body = await res.text().catch(() => '');
     throw new Error(`Discord API ${res.status}: ${body.slice(0, 300)}`);
@@ -27,7 +52,7 @@ export async function editOriginal(interaction, payload) {
   // A very fast command can PATCH before Discord has registered the deferred
   // ACK, which 404s. Retry once after a short pause instead of stranding the
   // user on "thinking…".
-  const first = await fetch(url, options);
+  const first = await fetch(url, { ...options, signal: AbortSignal.timeout(TIMEOUT_MS) });
   if (first.ok) return first;
   if (first.status === 404) {
     await new Promise((resolve) => setTimeout(resolve, 600));

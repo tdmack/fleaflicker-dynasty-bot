@@ -1,5 +1,6 @@
-// This league uses QB/RB/WR/TE/FLEX only — DEF and K never appear in any
-// output, filter, or color map. Single source of truth for that rule.
+// This bot targets QB/RB/WR/TE/FLEX dynasty leagues (see README "League-type
+// assumptions") — DEF and K never appear in any output, filter, or color map.
+// Single source of truth for that rule.
 
 const BLOCKED_POSITIONS = new Set(['DEF', 'DST', 'K', 'PK']);
 const BLOCKED_LABEL_WORDS = ['DEFENSE', 'KICKER', 'D/ST'];
