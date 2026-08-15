@@ -1,0 +1,65 @@
+name = "fleaflicker-dynasty-bot"
+main = "src/index.js"
+compatibility_date = "2026-08-01"
+
+# Cron 1: trade-alert poll + transaction feed (also supervises the DraftMonitor alarm chain).
+# Cron 2: daily weekly-post check (recap fires only once every matchup of a
+# week is final, so odd slates — MNF, Wednesday games — are handled by the
+# data gate, not the weekday).
+# Cron 3: Thursday + Sunday 15:00 UTC (11am ET) "Players to Monitor" lineup
+# check — Thursday catches TNF starters before their early lock, Sunday the
+# main slate. Skips itself in the offseason and once a week's games are all
+# final. These strings are matched literally in src/index.js `scheduled` —
+# keep both places in sync. NOTE: Cloudflare's day-of-week is 1-7 with
+# Sunday=1 (NOT standard cron's 0=Sunday) — use three-letter names.
+[triggers]
+crons = ["*/15 * * * *", "0 13 * * *", "0 15 * * thu,sun"]
+
+# Retain structured Worker logs (viewable in the Cloudflare dashboard) instead
+# of relying on a live `wrangler tail`.
+[observability]
+enabled = true
+
+# The Deploy to Cloudflare button provisions this namespace and fills in the
+# id automatically. Manual setup: `npx wrangler kv namespace create BOT_KV`
+# and paste the returned id here.
+[[kv_namespaces]]
+binding = "BOT_KV"
+id = ""
+
+# DraftMonitor: polls the draft board sub-minute while a draft is live
+# (armed via /draftalerts). SQLite-backed — available on the free plan.
+[[durable_objects.bindings]]
+name = "DRAFT_MONITOR"
+class_name = "DraftMonitor"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["DraftMonitor"]
+
+[vars]
+# Your Discord server ID (Developer Mode on → right-click server → Copy ID):
+DISCORD_GUILD_ID = ""
+# The number in your league URL: fleaflicker.com/nfl/leagues/<this>
+FLEAFLICKER_LEAGUE_ID = ""
+FLEAFLICKER_SPORT = "NFL"
+# Channel for automated trade alerts (required for the trade-alert cron):
+DISCORD_TRADE_CHANNEL_ID = ""
+# Channel for weekly recap/preview posts (falls back to the trade channel):
+DISCORD_RECAP_CHANNEL_ID = ""
+# Channel for draft updates / on-the-clock alerts (falls back to the trade channel):
+DISCORD_DRAFT_CHANNEL_ID = ""
+# Automated feed of non-trade transactions to the trade channel:
+#   "off" (default) | "waivers" (waiver claims) | "all" (claims + adds/drops)
+TRANSACTION_FEED = "off"
+# "on" posts a 48h "Who won this trade?" poll after each completed trade alert:
+TRADE_POLLS = "off"
+# FantasyCalc league shape for /value (defaults: 2 QBs, 12 teams, 0.5 PPR):
+FANTASYCALC_NUM_QBS = ""
+FANTASYCALC_NUM_TEAMS = ""
+FANTASYCALC_PPR = ""
+
+# Secrets (set with `wrangler secret put <NAME>`):
+#   DISCORD_TOKEN           — bot token (channel posts)
+#   DISCORD_PUBLIC_KEY      — app public key (interaction signature verification)
+#   DISCORD_APPLICATION_ID  — application ID (webhook follow-ups)
