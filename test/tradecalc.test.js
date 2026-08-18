@@ -43,6 +43,29 @@ test('happy path renders both sides, totals, and a verdict', () => {
   assert.match(embed.footer.text, /FantasyCalc \+ DynastyProcess 50\/50/);
 });
 
+test('raw totals are shown alongside adjusted, with a why-adjust note', () => {
+  const embed = buildTradecalcEmbed(blend(), 'Breece Hall, 2026 2nd', 'Marvin Harrison Jr.', {});
+  const [side1, side2, summary] = embed.fields;
+  // Raw total = sum of the displayed per-asset blended values.
+  const hall = Math.round(((5000 / 10000 + 4000 / 9000) / 2) * 10000);
+  const pick = Math.round(((2500 / 10000 + 2250 / 9000) / 2) * 10000);
+  const rawRe = new RegExp(`Raw total: \\*\\*${(hall + pick).toLocaleString('en-US')}\\*\\*`);
+  assert.match(side1.value, rawRe);
+  assert.match(side2.value, /Raw total/);
+  // Raw line comes before the adjusted line, and the note explains why.
+  assert.ok(side1.value.indexOf('Raw total') < side1.value.indexOf('Adjusted total'));
+  assert.match(summary.value, /Why adjust\?/);
+});
+
+test('a single-asset side shows equal raw and adjusted totals when it holds the top asset', () => {
+  const embed = buildTradecalcEmbed(blend(), 'Josh Allen', 'Breece Hall', {});
+  const [side1] = embed.fields;
+  // Allen is t and v: adjustment is a no-op, so both totals match.
+  const allen = 10000;
+  assert.match(side1.value, new RegExp(`Raw total: \\*\\*${allen.toLocaleString('en-US')}\\*\\*`));
+  assert.match(side1.value, new RegExp(`Adjusted total: \\*\\*${allen.toLocaleString('en-US')}\\*\\*`));
+});
+
 test('suffix-less input matches the suffixed player (harrison jr vs harrison)', () => {
   const embed = buildTradecalcEmbed(blend(), 'Marvin Harrison', 'Josh Allen', {});
   assert.match(embed.fields[0].value, /Marvin Harrison Jr\./);

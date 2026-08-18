@@ -62,6 +62,8 @@ function sideField(name, adjusted, total) {
     const approx = a.approx ? '≈' : '';
     return `• ${a.label} — **${fmt(a.value)}**${dagger}${approx}`;
   });
+  const rawTotal = adjusted.reduce((s, a) => s + a.value, 0);
+  lines.push(`Raw total: **${fmt(rawTotal)}**`);
   lines.push(`Adjusted total: **${fmt(total)}**`);
   return { name, value: lines.join('\n'), inline: false };
 }
@@ -90,6 +92,8 @@ export function buildTradecalcEmbed(blend, side1Raw, side2Raw, env) {
   const summaryLines = [
     `Net: **${fmt(Math.abs(r.delta))}** adjusted (${(r.deltaPct * 100).toFixed(1)}%) toward Side ${r.totalA >= r.totalB ? 1 : 2}`,
     `Verdict: ${verdict.line(strongerLabel)}`,
+    '',
+    '*Why adjust? Depth pieces count less than sticker price when packaged behind a bigger asset (KTC-style) — a pile of mid assets rarely equals one stud.*',
   ];
 
   const anySingle = [...r.adjustedA, ...r.adjustedB].some((a) => a.sources.length < 2);
