@@ -116,6 +116,7 @@ export function assembleBlend(fcRaw, dp) {
       team: p.team,
       value: blended.value,
       sources: blended.sources,
+      trend30Day: p.trend30Day ?? null,
     });
   }
   for (const [key, p] of dpByKey) {
@@ -129,6 +130,7 @@ export function assembleBlend(fcRaw, dp) {
       team: p.team,
       value: blended.value,
       sources: blended.sources,
+      trend30Day: null,
     });
   }
   players.sort((a, b) => b.value - a.value);
