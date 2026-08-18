@@ -91,3 +91,13 @@ test('lopsided trade gets the red color and overpay wording', () => {
   assert.match(embed.fields[2].value, /Lopsided/);
   assert.match(embed.fields[2].value, /Side 1 overpays/);
 });
+
+test('hint fallback pick is marked ≈ and the footer explains it', () => {
+  // 2028 is priced round-level only (Mid bucket); a Late request must
+  // resolve via fallback, carry ≈, and keep the user's requested label.
+  const fc2028 = [...FC, { name: '2028 2nd', position: 'PICK', team: '—', value: 1200 }];
+  const embed = buildTradecalcEmbed(assembleBlend(fc2028, DP), '2028 Late 2nd', 'Josh Allen', {});
+  assert.notEqual(embed.title, '❌ Error');
+  assert.match(embed.fields[0].value, /2028 Late 2nd — \*\*[\d,]+\*\*[†]?≈/);
+  assert.match(embed.footer.text, /≈/);
+});

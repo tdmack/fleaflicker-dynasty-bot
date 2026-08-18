@@ -50,17 +50,30 @@ function buildPickTable(pickEntries) {
   return { slots, hints };
 }
 
-function pickValueFrom(table, parsed) {
-  if (!table) return null;
-  if (parsed.slot !== null) {
-    const exact = table.slots.get(pickSlotKey(parsed));
-    if (exact !== undefined) return exact;
-  }
-  const bucket = table.hints.get(pickHintKey(parsed));
+function bucketValue(bucket) {
   if (!bucket) return null;
   const vals = bucket.explicit.length > 0 ? bucket.explicit : bucket.slotVals;
   if (vals.length === 0) return null;
   return vals.reduce((s, v) => s + v, 0) / vals.length;
+}
+
+// Returns { value, usedFallback } or null. Far-out years are only priced
+// at round level (stored under the Mid hint per the shared convention), so
+// an Early/Late request whose bucket is missing falls back to the round's
+// Mid value — flagged so the embed can say the hint wasn't really priced.
+function pickValueFrom(table, parsed) {
+  if (!table) return null;
+  if (parsed.slot !== null) {
+    const exact = table.slots.get(pickSlotKey(parsed));
+    if (exact !== undefined) return { value: exact, usedFallback: false };
+  }
+  const direct = bucketValue(table.hints.get(pickHintKey(parsed)));
+  if (direct !== null) return { value: direct, usedFallback: false };
+  if (parsed.hint !== 'Mid') {
+    const mid = bucketValue(table.hints.get(pickHintKey({ ...parsed, hint: 'Mid' })));
+    if (mid !== null) return { value: mid, usedFallback: true };
+  }
+  return null;
 }
 
 /**
@@ -126,7 +139,12 @@ export function assembleBlend(fcRaw, dp) {
 
   const resolvePick = (parsed) => {
     if (!parsed) return null;
-    return blendPair(pickValueFrom(fcTable, parsed), fcMax, pickValueFrom(dpTable, parsed), dpMax);
+    const fcHit = pickValueFrom(fcTable, parsed);
+    const dpHit = pickValueFrom(dpTable, parsed);
+    const blended = blendPair(fcHit ? fcHit.value : null, fcMax, dpHit ? dpHit.value : null, dpMax);
+    if (!blended) return null;
+    const approx = Boolean(fcHit?.usedFallback) || Boolean(dpHit?.usedFallback);
+    return { ...blended, approx };
   };
 
   return {

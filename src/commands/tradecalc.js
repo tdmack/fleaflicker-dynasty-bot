@@ -34,7 +34,7 @@ function resolveSide(raw, blend, sideName) {
     if (parsedPick) {
       const pick = blend.resolvePick(parsedPick);
       if (!pick) errors.push(`No pick value found for **${token}**.`);
-      else assets.push({ label: formatPickLabel(parsedPick), value: pick.value, sources: pick.sources });
+      else assets.push({ label: formatPickLabel(parsedPick), value: pick.value, sources: pick.sources, approx: pick.approx });
       continue;
     }
     const norm = normalizeName(token);
@@ -59,7 +59,8 @@ const fmt = (n) => Math.round(n).toLocaleString('en-US');
 function sideField(name, adjusted, total) {
   const lines = adjusted.map((a) => {
     const dagger = a.sources.length < 2 ? '†' : '';
-    return `• ${a.label} — **${fmt(a.value)}**${dagger}`;
+    const approx = a.approx ? '≈' : '';
+    return `• ${a.label} — **${fmt(a.value)}**${dagger}${approx}`;
   });
   lines.push(`Adjusted total: **${fmt(total)}**`);
   return { name, value: lines.join('\n'), inline: false };
@@ -96,6 +97,8 @@ export function buildTradecalcEmbed(blend, side1Raw, side2Raw, env) {
   if (!blend.sourcesUp.fantasycalc) footerParts.push('FantasyCalc unavailable');
   if (!blend.sourcesUp.dynastyprocess) footerParts.push('DynastyProcess unavailable');
   if (anySingle) footerParts.push('† single-source value');
+  const anyApprox = [...r.adjustedA, ...r.adjustedB].some((a) => a.approx);
+  if (anyApprox) footerParts.push('≈ Early/Late not priced that far out; round value used');
 
   return createEmbed({
     title: '⚖️ Trade Calculator',

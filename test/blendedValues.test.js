@@ -98,3 +98,41 @@ test('one source down → everything single-source, sourcesUp reflects it', () =
   const pick = blend.resolvePick(parsePickLabel('2026 2nd'));
   assert.deepEqual(pick.sources, ['FantasyCalc']);
 });
+
+// Far-out years are only priced at round level (→ Mid bucket) by both
+// sources. A hinted request must fall back to the round value rather than
+// error — but transparently, via the approx flag.
+const FC_2028 = [
+  ...FC,
+  { name: '2028 2nd', position: 'PICK', team: '—', value: 1200 },
+];
+const DP_2028 = {
+  ...DP,
+  picks: [...DP.picks, { year: 2028, round: 2, hint: 'Mid', slot: null, value: 1100 }],
+};
+
+test('hinted request falls back to the round-level (Mid) value with approx flag', () => {
+  const blend = assembleBlend(FC_2028, DP_2028);
+  const res = blend.resolvePick(parsePickLabel('2028 Late 2nd'));
+  const expected = Math.round(((1200 / 10000 + 1100 / 9000) / 2) * BLEND_SCALE);
+  assert.equal(res.value, expected);
+  assert.equal(res.approx, true);
+  assert.deepEqual(res.sources, ['FantasyCalc', 'DynastyProcess']);
+});
+
+test('exact hint hit does not set approx', () => {
+  const blend = assembleBlend(FC, DP);
+  const res = blend.resolvePick(parsePickLabel('2026 Early 1st'));
+  assert.equal(res.approx, false);
+});
+
+test('Mid request never counts as approx (round-level IS the Mid convention)', () => {
+  const blend = assembleBlend(FC_2028, DP_2028);
+  const res = blend.resolvePick(parsePickLabel('2028 2nd'));
+  assert.equal(res.approx, false);
+});
+
+test('fallback still returns null when the round is unpriced entirely', () => {
+  const blend = assembleBlend(FC_2028, DP_2028);
+  assert.equal(blend.resolvePick(parsePickLabel('2028 Late 5th')), null);
+});
