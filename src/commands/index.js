@@ -14,14 +14,15 @@ import * as score from './score.js';
 import * as standings from './standings.js';
 import * as testalert from './testalert.js';
 import * as testweekly from './testweekly.js';
+import * as tradecalc from './tradecalc.js';
 import * as trades from './trades.js';
 import * as transactions from './transactions.js';
 import * as value from './value.js';
 
 const modules = [
   activity, draftalerts, draftboard, freeagents, matchup, picks, player,
-  register, roster, rules, score, standings, testalert, testweekly, trades,
-  transactions, value,
+  register, roster, rules, score, standings, testalert, testweekly, tradecalc,
+  trades, transactions, value,
 ];
 
 export const commands = Object.fromEntries(

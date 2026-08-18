@@ -26,6 +26,7 @@ minutes.
 | `/trades [filter]` | Recent completed or pending trades |
 | `/player <name>` | Player card with status, injury, news |
 | `/value [player]` | Dynasty trade values (FantasyCalc) |
+| `/tradecalc side1: side2:` | Trade calculator — 50/50 FantasyCalc + DynastyProcess blend, KTC-style adjustment |
 | `/register <team>` | Link your Discord account to your Fleaflicker team (draft-turn DMs) |
 | `/draftalerts <action> [reminder_minutes]` | Arm/disarm draft-turn alerts (Manage Server) |
 | `/testalert` | Post a test message to the alert channel (Manage Server) |
