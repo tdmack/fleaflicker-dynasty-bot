@@ -53,11 +53,12 @@ export async function execute(interaction, env) {
     const name = p.nameFull || 'Unknown';
     const pos = p.position || '?';
     const nflTeam = p.proTeamAbbreviation || '—';
+    // No average means no games played yet (common in-season), not 0 points
     const avgPts = entry.seasonAverage?.formatted
-      ?? entry.viewingActualPointsAverage?.formatted
-      ?? '0.00';
+      ?? entry.viewingActualPointsAverage?.formatted;
+    const pts = avgPts ? `${avgPts} pts` : '—';
     const injury = p.injury ? ` ⚠️ ${p.injury.severity}` : '';
-    return `**${i + 1}.** ${name} (${pos}, ${nflTeam}) — ${avgPts} pts${injury}`;
+    return `**${i + 1}.** ${name} (${pos}, ${nflTeam}) — ${pts}${injury}`;
   });
 
   const title = position

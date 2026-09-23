@@ -1,10 +1,34 @@
 // Shared transaction classification and line formatting — used by
-// /transactions, /activity, and the weekly recap digest so the three
-// surfaces can't drift apart.
+// /transactions, /activity, the transaction feed, and the weekly recap digest
+// so the surfaces can't drift apart.
 
-/** Classify a Fleaflicker transaction type string. */
-export function txKind(type) {
-  const t = (type || '').toUpperCase();
+// Keys that mark a type-less item as something other than a free-agent add
+// (bidAmount is what separates a waiver claim from an instant add).
+const NON_ADD_KEYS = ['tradeId', 'draftPick', 'draftedAtSlot', 'auctionDollarAmount', 'bidAmount'];
+
+/**
+ * The Fleaflicker type string for a transaction, e.g. "TRANSACTION_CLAIM".
+ *
+ * Fleaflicker omits `type` entirely on an instant free-agent pickup
+ * (TRANSACTION_ADD is the first value of its type enum, and it appears to
+ * leave out a default enum value — inferred, not documented). Offseason
+ * pickups all go through waivers as TRANSACTION_CLAIM, so these only show up
+ * once free agency opens in-season. A type-less item is treated as an ADD only
+ * when it looks like one; anything else stays unknown (null) rather than being
+ * silently mislabelled.
+ */
+export function resolveTxType(tx) {
+  if (!tx) return null;
+  if (tx.type) return tx.type;
+  const hasPlayer = Boolean(tx.player?.proPlayer);
+  const hasTeam = tx.team?.id != null;
+  if (hasPlayer && hasTeam && !NON_ADD_KEYS.some((k) => k in tx)) return 'TRANSACTION_ADD';
+  return null;
+}
+
+/** Classify a Fleaflicker transaction object. */
+export function txKind(tx) {
+  const t = (resolveTxType(tx) || '').toUpperCase();
   if (t === 'TRANSACTION_TRADE') return 'trade';
   if (t.includes('CLAIM')) return 'claim';
   if (t.includes('_ADD')) return 'add';
