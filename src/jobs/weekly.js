@@ -454,7 +454,7 @@ async function weekTransactionDigest(env, d) {
       .map((item) => {
         const tx = item.transaction || {};
         const line = formatSimpleTransaction(
-          txKind(tx.type),
+          txKind(tx),
           tx.team?.name,
           tx.player?.proPlayer?.nameFull,
         );

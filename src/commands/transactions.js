@@ -51,7 +51,7 @@ export async function execute(interaction, env) {
     const timestamp = formatTimestamp(Number(item.timeEpochMilli) / 1000);
     // Player lives at transaction.player.proPlayer.nameFull for adds/drops/claims
     const player = tx.player?.proPlayer?.nameFull || '';
-    const kind = txKind(tx.type);
+    const kind = txKind(tx);
 
     if (kind === 'trade') {
       const pick = tx.draftPick;

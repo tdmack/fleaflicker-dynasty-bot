@@ -23,7 +23,7 @@
 
 import { fetchLeagueTransactions } from '../services/fleaflicker.js';
 import { createEmbed, COLORS, formatTimestamp, truncate } from '../utils/formatters.js';
-import { txKind, formatSimpleTransaction } from '../utils/transactions.js';
+import { txKind, resolveTxType, formatSimpleTransaction } from '../utils/transactions.js';
 import { postChannelMessage } from '../lib/discord.js';
 
 const FEED_KINDS = { waivers: ['claim'], all: ['claim', 'add', 'drop'] };
@@ -48,11 +48,15 @@ export function feedKindsFor(mode) {
   return null;
 }
 
-/** Stable dedup key for a FetchLeagueTransactions item. */
+/**
+ * Stable dedup key for a FetchLeagueTransactions item. Uses the resolved type
+ * so a type-less free-agent add keys as TRANSACTION_ADD; items that carry a
+ * type key exactly as they always have.
+ */
 export function txFeedKey(item) {
   const tx = item.transaction || {};
   const player = tx.player?.proPlayer?.id ?? tx.player?.proPlayer?.nameFull ?? '';
-  return `${item.timeEpochMilli}:${tx.type}:${tx.team?.id ?? ''}:${player}`;
+  return `${item.timeEpochMilli}:${resolveTxType(tx)}:${tx.team?.id ?? ''}:${player}`;
 }
 
 /**
@@ -79,7 +83,7 @@ export async function runTransactionFeed(env, {
   }
 
   const relevant = (data.items || []).filter(
-    (item) => kinds.includes(txKind(item.transaction?.type))
+    (item) => kinds.includes(txKind(item.transaction))
   );
 
   const seenRaw = await env.BOT_KV.get(kvKey, 'json');
@@ -105,7 +109,7 @@ export async function runTransactionFeed(env, {
       // FEED_KINDS only ever contains kinds with entries in KIND_FORMAT, so
       // formatSimpleTransaction can't return null for these items.
       const line = formatSimpleTransaction(
-        txKind(tx.type), tx.team?.name, tx.player?.proPlayer?.nameFull || ''
+        txKind(tx), tx.team?.name, tx.player?.proPlayer?.nameFull || ''
       );
       // Cap a single line so one pathological name/timestamp can never alone
       // exceed a chunk and 400 the post (which would break the retry loop

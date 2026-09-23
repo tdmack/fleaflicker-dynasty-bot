@@ -103,7 +103,7 @@ export async function execute(interaction, env) {
   };
 }
 
-function formatActivityItem(item) {
+export function formatActivityItem(item) {
   // Grouped trade summary
   if (item._tradeGroup) {
     const teams = item.teams.join(' ↔ ');
@@ -118,22 +118,22 @@ function formatActivityItem(item) {
     return `⚙️ ${desc || `${name} made a league change`}`;
   }
 
-  // IR / taxi-squad slot moves — { player, team, removed?: true } where
-  // removed means the player came OFF the slot (shapes verified against
-  // captured FetchLeagueActivity payloads)
+  // IR and taxi-squad slot moves share one shape:
+  // reserveChange { player, team, taxi?: true, removed?: true } — taxi marks a
+  // taxi-squad move (there is no separate taxiChange item), removed means the
+  // player came OFF the slot. Verified against captured FetchLeagueActivity
+  // payloads.
   if (item.reserveChange) {
-    const { player, team, removed } = item.reserveChange;
+    const { player, team, removed, taxi } = item.reserveChange;
     const name = player?.proPlayer?.nameFull || 'a player';
+    if (taxi) {
+      const verb = removed ? 'promoted' : 'moved';
+      const prep = removed ? 'from' : 'to';
+      return `🚕 **${team?.name || '?'}** ${verb} **${name}** ${prep} the taxi squad`;
+    }
     const verb = removed ? 'activated' : 'placed';
     const prep = removed ? 'from' : 'on';
     return `🏥 **${team?.name || '?'}** ${verb} **${name}** ${prep} IR`;
-  }
-  if (item.taxiChange) {
-    const { player, team, removed } = item.taxiChange;
-    const name = player?.proPlayer?.nameFull || 'a player';
-    const verb = removed ? 'promoted' : 'moved';
-    const prep = removed ? 'from' : 'to';
-    return `🚕 **${team?.name || '?'}** ${verb} **${name}** ${prep} the taxi squad`;
   }
 
   // transaction: add, drop, claim (non-trade)
@@ -144,9 +144,9 @@ function formatActivityItem(item) {
       || item.transaction.player?.proPlayer?.nameFull
       || '';
 
-    const line = formatSimpleTransaction(txKind(item.transaction.type), team, player);
+    const line = formatSimpleTransaction(txKind(item.transaction), team, player);
     if (line) return line;
-    return `🔄 [${item.transaction.type}]${team ? ` — **${team}**` : ''}`;
+    return `🔄 [${item.transaction.type || 'unknown'}]${team ? ` — **${team}**` : ''}`;
   }
 
   // Unknown item shape — show keys for debugging
