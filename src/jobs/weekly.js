@@ -25,6 +25,10 @@ const KV_TTL = 60 * 86400; // posted-markers expire after ~2 months
 // Historical scoreboards are fetched in small batches rather than all at once:
 // a week-14 recap would otherwise open 13 concurrent subrequests in one burst.
 const HISTORY_BATCH = 4;
+// The week-in-moves digest walks the newest-first transactions feed back to
+// the start of the week; this caps a runaway walk (30 items per page).
+const MAX_TX_PAGES = 5;
+const MAX_MOVE_LINES = 15;
 
 const recapKey = (season, week) => `weekly:recap:${season}:${week}`;
 const previewKey = (season, week) => `weekly:preview:${season}:${week}`;
@@ -133,10 +137,13 @@ export async function postRecap(env, channelId, season, week, scoreboard, apiSea
     const an = g.away?.name || 'Away';
     const hs = g.homeScore?.score?.value ?? 0;
     const as = g.awayScore?.score?.value ?? 0;
-    const header = `**${hn}** ${fmtPts(hs)} — ${fmtPts(as)} **${an}**`;
-    if (hs === as) return `${header}\n  *Tied*`;
-    const winner = hs > as ? hn : an;
-    return `${header}\n  *${winner} by ${Math.abs(hs - as).toFixed(1)}*`;
+    const header = `**${hn}** ${fmtScore(g.homeScore)} — ${fmtScore(g.awayScore)} **${an}**`;
+    const winner = gameWinner(g);
+    if (!winner) return `${header}\n  *Tied*`;
+    const winnerName = winner === 'home' ? hn : an;
+    const margin = Math.abs(hs - as);
+    if (fmtPoints(margin) === '0') return `${header}\n  *${winnerName} wins on the tiebreaker*`;
+    return `${header}\n  *${winnerName} by ${fmtPoints(margin)}*`;
   });
 
   const margins = games.map((g) => ({
@@ -147,7 +154,7 @@ export async function postRecap(env, channelId, season, week, scoreboard, apiSea
   if (margins.length >= 2) {
     const blowout = margins[0];
     const nailbiter = margins[margins.length - 1];
-    calloutLine = `\n💥 Biggest blowout: **${gameLabel(blowout.g)}** (${blowout.margin.toFixed(1)})\n😅 Closest call: **${gameLabel(nailbiter.g)}** (${nailbiter.margin.toFixed(1)})`;
+    calloutLine = `\n💥 Biggest blowout: **${gameLabel(blowout.g)}** (${fmtPoints(blowout.margin)})\n😅 Closest call: **${gameLabel(nailbiter.g)}** (${fmtPoints(nailbiter.margin)})`;
   }
 
   const standingsLines = [...actualByTeam.values()]
@@ -283,9 +290,9 @@ async function postRecapMetrics(env, channelId, season, week, scoreboard, actual
   const topScorers = playerScores
     .sort((a, b) => b.points - a.points)
     .slice(0, 5)
-    .map((p, i) => `**${i + 1}.** ${p.name} (${p.position}) — ${p.points.toFixed(1)} pts *(${p.teamName})*`);
+    .map((p, i) => `**${i + 1}.** ${p.name} (${p.position}) — ${p.display} pts *(${p.teamName})*`);
 
-  const txLines = await weekTransactionDigest(env, d);
+  const txLines = await weekTransactionDigest(env, d, scoreboard, week);
 
   const embeds = [];
   if (historyComplete) {
@@ -386,6 +393,7 @@ function collectPlayers(playerScores, box, game) {
         name: lp.proPlayer.nameFull || 'Unknown',
         position: lp.proPlayer.position || '?',
         points,
+        display: lp.viewingActualPoints?.formatted || fmtPoints(points),
         teamName: game[side]?.name || '?',
       });
     }
@@ -448,21 +456,74 @@ function luckBadge(wins) {
   return '';
 }
 
-function fmtPts(v) {
-  return typeof v === 'number' ? v.toFixed(1) : '0.0';
+// Fleaflicker scores to 0.05, so show its own text rather than rounding —
+// one decimal turned 114.45 into "114.5" and made margins look wrong.
+function fmtScore(side) {
+  const score = side?.score;
+  if (score?.formatted) return score.formatted;
+  return typeof score?.value === 'number' ? fmtPoints(score.value) : '0';
+}
+
+// Up to two decimals, trailing zeros dropped — Fleaflicker's own style.
+function fmtPoints(v) {
+  return String(Math.round(v * 100) / 100);
+}
+
+// 'home' | 'away' | null (tie). Fleaflicker's WIN/LOSE/TIE result wins over
+// comparing scores, since a league tiebreaker can decide an equal-score game.
+function gameWinner(g) {
+  if (g.homeResult === 'WIN' || g.awayResult === 'LOSE') return 'home';
+  if (g.awayResult === 'WIN' || g.homeResult === 'LOSE') return 'away';
+  if (g.homeResult === 'TIE' || g.awayResult === 'TIE') return null;
+  const hs = g.homeScore?.score?.value ?? 0;
+  const as = g.awayScore?.score?.value ?? 0;
+  if (hs === as) return null;
+  return hs > as ? 'home' : 'away';
 }
 
 function gameLabel(g) {
   return `${g.home?.name || 'Home'} vs ${g.away?.name || 'Away'}`;
 }
 
-async function weekTransactionDigest(env, d) {
+/**
+ * [start, end) epoch-millis of a scoring week, from the scoreboard's own
+ * period data: the week's start through the next week's start (or now, while
+ * the next week isn't listed). Falls back to the last 7 days when the
+ * scoreboard carries no period timing.
+ */
+export function weekWindow(scoreboard, week, now = Date.now()) {
+  const start = Number(scoreboard.schedulePeriod?.low?.startEpochMilli);
+  if (!Number.isFinite(start) || start <= 0) return { start: now - 7 * 86400 * 1000, end: now };
+  const next = (scoreboard.eligibleSchedulePeriods || [])
+    .find((p) => Number(p.value) === Number(week) + 1);
+  const nextStart = Number(next?.low?.startEpochMilli);
+  return { start, end: Number.isFinite(nextStart) && nextStart > start ? nextStart : now };
+}
+
+async function weekTransactionDigest(env, d, scoreboard, week) {
   try {
-    const data = await d.fetchTransactions(env);
-    const cutoff = Date.now() - 7 * 86400 * 1000;
-    return (data.items || [])
-      .filter((item) => Number(item.timeEpochMilli) >= cutoff)
-      .slice(0, 8)
+    const { start, end } = weekWindow(scoreboard, week);
+    // The feed is newest-first; walk pages until we're past the week's start.
+    const items = [];
+    let offset;
+    let reachedStart = false;
+    for (let page = 0; page < MAX_TX_PAGES; page++) {
+      const data = await d.fetchTransactions(env, undefined, offset);
+      const pageItems = data.items || [];
+      items.push(...pageItems);
+      const oldest = Number(pageItems.at(-1)?.timeEpochMilli);
+      if (!data.resultOffsetNext || pageItems.length === 0 || oldest < start) {
+        reachedStart = true;
+        break;
+      }
+      offset = data.resultOffsetNext;
+    }
+
+    const lines = items
+      .filter((item) => {
+        const t = Number(item.timeEpochMilli);
+        return t >= start && t < end;
+      })
       .map((item) => {
         const tx = item.transaction || {};
         const line = formatSimpleTransaction(
@@ -474,6 +535,11 @@ async function weekTransactionDigest(env, d) {
         return `• ${line} — *${formatTimestamp(Number(item.timeEpochMilli) / 1000)}*`;
       })
       .filter(Boolean);
+
+    const shown = lines.slice(0, MAX_MOVE_LINES);
+    if (lines.length > shown.length) shown.push(`*…and ${lines.length - shown.length} more*`);
+    if (!reachedStart && shown.length > 0) shown.push('*…older moves this week not shown*');
+    return shown;
   } catch (err) {
     console.error('[Weekly] Transaction digest failed:', err.message);
     return [];
