@@ -119,6 +119,10 @@ export async function postRecap(env, channelId, season, week, scoreboard, apiSea
         winEquivalents: wins + ties / 2,
         gamesPlayed: total,
         pointsFor: t.pointsFor?.formatted || '—',
+        pointsForValue: typeof t.pointsFor?.value === 'number' ? t.pointsFor.value : 0,
+        // Fleaflicker's league-wide rank, which already applies the league's
+        // tiebreakers — winPct alone leaves tied teams in division order
+        leagueRank: Number.isInteger(rec.rank) ? rec.rank : null,
       });
     }
   }
@@ -147,7 +151,7 @@ export async function postRecap(env, channelId, season, week, scoreboard, apiSea
   }
 
   const standingsLines = [...actualByTeam.values()]
-    .sort((a, b) => (b.winPct ?? 0) - (a.winPct ?? 0))
+    .sort(compareStandings)
     .map((t, i) => `**${i + 1}.** ${t.name} — ${t.record} | PF: ${t.pointsFor}`);
 
   await d.post(env, channelId, {
@@ -177,6 +181,14 @@ export async function postRecap(env, channelId, season, week, scoreboard, apiSea
     console.error(`[Weekly] Metrics message for week ${week} failed:`, err.message);
   }
   console.log(`[Weekly] Posted week ${week} recap`);
+}
+
+// Fleaflicker's rank first; win % then points for only when a rank is missing.
+function compareStandings(a, b) {
+  if (a.leagueRank !== null && b.leagueRank !== null) return a.leagueRank - b.leagueRank;
+  if (a.leagueRank !== null) return -1;
+  if (b.leagueRank !== null) return 1;
+  return (b.winPct ?? 0) - (a.winPct ?? 0) || b.pointsForValue - a.pointsForValue;
 }
 
 // Message 2: all-play/luck + coach ratings + top scorers + transactions

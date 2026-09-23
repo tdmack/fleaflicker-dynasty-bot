@@ -215,3 +215,32 @@ test('historical scoreboards are fetched in capped batches, not one burst', asyn
   assert.equal(posts.length, 2);
   assert.ok(peak <= 4, `expected at most 4 concurrent scoreboard fetches, saw ${peak}`);
 });
+
+test('recap standings follow Fleaflicker rank, not division order', async () => {
+  // Real week-2 layout: four 2-0 teams split across two divisions, where
+  // Fleaflicker's tiebreak interleaves them (div order would be A, B, C, D).
+  const team = (id, rank, wins, pf) => ({
+    id,
+    name: `Team ${id}`,
+    recordOverall: { wins, losses: 2 - wins, rank, formatted: `${wins}-${2 - wins}` },
+    pointsFor: { value: pf, formatted: String(pf) },
+  });
+  const standings = {
+    divisions: [
+      { teams: [team('A', 1, 2, 399.05), team('B', 4, 2, 261.55), team('E', 5, 1, 310.9)] },
+      { teams: [team('C', 2, 2, 375.9), team('D', 3, 2, 271.6)] },
+    ],
+  };
+  const posts = [];
+  await postRecap({ BOT_KV: fakeKv() }, '999', SEASON, 2, scoreboardFor(2), undefined, {
+    fetchScoreboard: async (_env, week) => scoreboardFor(week),
+    fetchStandings: async () => standings,
+    fetchBoxscore: async () => ({}),
+    fetchTransactions: async () => ({ items: [] }),
+    post: async (_env, channelId, payload) => void posts.push({ channelId, payload }),
+  });
+
+  const box = posts[0].payload.embeds.find((e) => e.title === '🏆 Standings');
+  const order = [...box.description.matchAll(/Team (\w)/g)].map((m) => m[1]);
+  assert.deepEqual(order, ['A', 'C', 'D', 'B', 'E']);
+});
