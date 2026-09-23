@@ -93,9 +93,10 @@ export async function fetchLeagueDraftBoard(env, season) {
   return get(env, 'FetchLeagueDraftBoard', params);
 }
 
-export async function fetchLeagueTransactions(env, teamId) {
+export async function fetchLeagueTransactions(env, teamId, resultOffset) {
   const params = {};
   if (teamId) params.team_id = teamId;
+  if (resultOffset) params.result_offset = resultOffset;
   return get(env, 'FetchLeagueTransactions', params);
 }
 
